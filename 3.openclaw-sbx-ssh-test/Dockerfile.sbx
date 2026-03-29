@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1.7
+# Dockerfile.sbx — OpenClaw Gateway, SSH sandbox mode
+#
+# Extends ghcr.io/openclaw/openclaw:latest with:
+#   1. openssh-client   — lets the gateway execute sandbox commands on a
+#                          remote SSH target instead of local Docker containers.
+#   2. gosu             — used by the entrypoint to drop from root to node
+#                          after fixing named-volume ownership.
+#   3. entrypoint-sbx.sh — handles first-boot config init + privilege drop.
+#
+# Build:
+#   docker build -f Dockerfile.sbx -t openclaw-sbx-ssh:latest .
+#
+# Run (see run-sbx.sh for a full example):
+#   docker run -d --name openclaw-gateway-ssh --init --restart unless-stopped \
+#     -v openclaw-config:/home/node/.openclaw \
+#     -v openclaw-workspace:/home/node/.openclaw/workspace \
+#     -v ~/.ssh:/home/node/.ssh:ro \
+#     -p 18789:18789 -p 18790:18790 \
+#     -e OPENCLAW_GATEWAY_TOKEN=<your-token> \
+#     -e OPENCLAW_SSH_TARGET=user@host:22 \
+#     openclaw-sbx-ssh:latest
+
+FROM ghcr.io/openclaw/openclaw:latest
+
+# Re-elevate to root for installation steps.
+# The base image ends with USER node; we need root to install packages.
+USER root
+
+# Install openssh-client and gosu.
+#
+# openssh-client:
+#   Required for the gateway to execute sandbox commands on a remote SSH
+#   target.  The SSH backend uses `ssh` to run exec, file read/write, and
+#   workspace seeding on the remote machine.
+#
+# gosu:
+#   Used by entrypoint-sbx.sh to permanently drop from root to the 'node'
+#   user after performing the chown step.  Preferred over `su -c` because
+#   it replaces the root process (exec semantics) with no shell wrapper.
+RUN --mount=type=cache,id=openclaw-sbx-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-sbx-apt-lists,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates openssh-client gosu
+
+# Prepare SSH directory for the node user (bind-mounted at runtime).
+RUN mkdir -p /home/node/.ssh && chown node:node /home/node/.ssh && chmod 700 /home/node/.ssh
+
+# Copy entrypoint script (expected alongside this Dockerfile in the build context).
+COPY entrypoint-sbx.sh /usr/local/bin/entrypoint-sbx.sh
+RUN chmod 755 /usr/local/bin/entrypoint-sbx.sh
+
+# ── Runtime environment defaults ─────────────────────────────────────────
+# All values are overridable at `docker run` time via -e.
+ENV HOME=/home/node
+ENV OPENCLAW_GATEWAY_PORT=28789
+ENV OPENCLAW_BRIDGE_PORT=28790
+# lan = bind to 0.0.0.0, accessible from the local network.
+# Use "loopback" for localhost-only access.
+ENV OPENCLAW_GATEWAY_BIND=lan
+
+# ── Entrypoint ─────────────────────────────────────────────────────────────
+# Runs as root; entrypoint-sbx.sh handles:
+#   1. chown named volumes → node:node
+#   2. Copy SSH keys to /home/node/.ssh with correct permissions
+#   3. First-boot config init (sandbox policy, gateway mode/bind, token)
+#   4. exec gosu node <gateway>  — drops root permanently
+# Note: use `docker exec --user node` for interactive exec sessions.
+ENTRYPOINT ["/usr/local/bin/entrypoint-sbx.sh"]
+CMD []
