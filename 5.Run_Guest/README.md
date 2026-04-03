@@ -119,3 +119,8 @@ kill "$(cat /tmp/tdx-demo-td-pid.pid)"
 - If launch fails with missing file errors, re-check `QEMU_BINARY`, `OVMF_BIOS`, and `DISK_IMAGE` paths.
 - If SSH is not reachable, wait a bit longer for guest boot and verify guest SSH service is enabled.
 - If port `10022` is already in use, update the `hostfwd` setting in the script.
+
+## Run VM with SGX
+SHOW_BOOT_LOG=1 TDX_MODE=0 ENABLE_SGX=1 SGX_EPC_SIZE=128G MEMORY_SIZE=256G ./run_vm_with_sgx.sh
+
+
