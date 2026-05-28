@@ -250,7 +250,7 @@ if [[ "$FIRST_BOOT" -eq 1 ]]; then
   sandbox_ok=true
   prestart_cli config set agents.defaults.sandbox.mode \
     "${OPENCLAW_SANDBOX_MODE:-all}"                                          >/dev/null || sandbox_ok=false
-  prestart_cli config set agents.defaults.sandbox.scope         "agent"      >/dev/null || sandbox_ok=false
+  prestart_cli config set agents.defaults.sandbox.scope         "session"      >/dev/null || sandbox_ok=false
   prestart_cli config set agents.defaults.sandbox.workspaceAccess \
     "${OPENCLAW_WORKSPACE_ACCESS:-rw}"                                        >/dev/null || sandbox_ok=false
   prestart_cli config set agents.defaults.sandbox.backend       "docker"     >/dev/null || sandbox_ok=false
