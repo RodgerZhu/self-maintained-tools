@@ -22,8 +22,9 @@
 #   openclaw-config     →  /home/node/.openclaw           (gateway config)
 #   openclaw-workspace  →  /home/node/.openclaw/workspace (user workspace)
 #
-# Mandatory bind mount (see Dockerfile.sbx header for explanation):
-#   /var/run/docker.sock →  /var/run/docker.sock
+# Mandatory Docker access mount (see Dockerfile.sbx header for explanation):
+#   Default host docker.sock path: bind the socket file to /var/run/docker.sock
+#   Alternate proxy socket path: bind the parent directory and export DOCKER_HOST
 #
 # To remove all persisted data:
 #   docker volume rm openclaw-config openclaw-workspace
@@ -38,6 +39,9 @@ BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
 GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
 GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
 DOCKER_SOCKET="${OPENCLAW_DOCKER_SOCKET:-}"
+CONTAINER_DOCKER_HOST=""
+DOCKER_MOUNT_ARGS=()
+DOCKER_HOST_ENV_ARGS=()
 DO_BUILD=0
 NO_START=0
 CONFIG_VOLUME="${OPENCLAW_CONFIG_VOLUME:-openclaw-config}"
@@ -126,6 +130,16 @@ command -v docker >/dev/null 2>&1 || fail "docker not found."
 [[ -z "$DOCKER_SOCKET" ]] && DOCKER_SOCKET="/var/run/docker.sock"
 [[ -S "$DOCKER_SOCKET" ]] || \
   fail "Docker socket not found at $DOCKER_SOCKET. Sandbox mode requires docker.sock."
+
+if [[ "$DOCKER_SOCKET" == "/var/run/docker.sock" ]]; then
+  DOCKER_MOUNT_ARGS=(-v "${DOCKER_SOCKET}:/var/run/docker.sock")
+else
+  DOCKER_SOCKET_DIR="$(dirname "$DOCKER_SOCKET")"
+  DOCKER_SOCKET_BASENAME="$(basename "$DOCKER_SOCKET")"
+  DOCKER_MOUNT_ARGS=(-v "${DOCKER_SOCKET_DIR}:${DOCKER_SOCKET_DIR}")
+  CONTAINER_DOCKER_HOST="unix://${DOCKER_SOCKET_DIR}/${DOCKER_SOCKET_BASENAME}"
+  DOCKER_HOST_ENV_ARGS=(-e "DOCKER_HOST=${CONTAINER_DOCKER_HOST}")
+fi
 
 # Detect GID of docker.sock — the gateway container's 'node' user must be in
 # this group to read/write the socket without running as root.
@@ -340,7 +354,12 @@ echo "==> Starting container: $CONTAINER_NAME"
 echo "    Image          : $IMAGE"
 echo "    Config volume  : $CONFIG_VOLUME  →  /home/node/.openclaw"
 echo "    Workspace vol  : $WORKSPACE_VOLUME  →  /home/node/.openclaw/workspace"
-echo "    docker.sock    : $DOCKER_SOCKET  [bind mount — mandatory for sandbox]"
+if [[ -n "$CONTAINER_DOCKER_HOST" ]]; then
+  echo "    docker mount   : $(dirname "$DOCKER_SOCKET")  →  $(dirname "${CONTAINER_DOCKER_HOST#unix://}")  [directory bind via DOCKER_HOST]"
+  echo "    DOCKER_HOST    : $CONTAINER_DOCKER_HOST"
+else
+  echo "    docker.sock    : $DOCKER_SOCKET  [bind mount — mandatory for sandbox]"
+fi
 echo "    Docker GID     : $DOCKER_GID"
 echo "    Gateway port   : $GATEWAY_PORT"
 echo "    Gateway bind   : $GATEWAY_BIND"
@@ -364,15 +383,15 @@ docker run \
   --restart unless-stopped \
   -v "${CONFIG_VOLUME}:/home/node/.openclaw" \
   -v "${WORKSPACE_VOLUME}:/home/node/.openclaw/workspace" \
-  -v "${DOCKER_SOCKET}:/var/run/docker.sock" \
+  "${DOCKER_MOUNT_ARGS[@]}" \
   --group-add "$DOCKER_GID" \
   -p "${GATEWAY_PORT}:18789" \
   -p "${BRIDGE_PORT}:18790" \
   -e "OPENCLAW_GATEWAY_PORT=${GATEWAY_PORT}" \
   -e "OPENCLAW_GATEWAY_BIND=${GATEWAY_BIND}" \
+  "${DOCKER_HOST_ENV_ARGS[@]}" \
   "${TOKEN_ENV_ARGS[@]}" \
   "$IMAGE"
-
 # ---------------------------------------------------------------------------
 # Post-start summary
 # ---------------------------------------------------------------------------
